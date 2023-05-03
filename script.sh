@@ -158,5 +158,8 @@ echo "POD URL verification completed in  $rounded_elapsed_time seconds." >> $rep
 
 if [ -f "$report" ]; then
   cat "$report"
+else
+  echo "No RPM files found"
 fi
+
 
