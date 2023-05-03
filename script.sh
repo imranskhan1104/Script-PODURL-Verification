@@ -1,5 +1,7 @@
 #!/bin/bash
 
+start_time=$(date +%s.%N)
+
 input_dir="rpm/"
 output_dir="file_extract/"
 config_file="$output_dir/cssensor-dcos.json"
@@ -9,10 +11,6 @@ report="test_report.log"
 
 if [ -f "$report" ]; then
   rm "$report"
-fi
-
-if [ -d "usr/" ]; then
-  rm -rf "usr/"
 fi
 
 if [ -d "$output_dir" ]; then
@@ -41,9 +39,9 @@ for input_file in "$input_dir"/*.rpm; do
 
   echo "Extracting $filename to $output_dir ..." >> $report
 
-  rpm2cpio "$input_file" | cpio -idmv > /dev/null 2>&1
+  rpm2cpio "$input_file" | cpio -idmv -D "$output_dir"> /dev/null 2>&1
 
-  mv "usr" "file_extract/"
+#  mv "usr" "file_extract/"
 
   if [ $? -ne 0 ]; then
     echo "Error: RPM extraction failed for $filename"  >> $report
@@ -150,11 +148,15 @@ for input_file in "$input_dir"/*.rpm; do
 
 done
 
-if [ -d "usr/" ]; then
-  rm -rf "usr/"
-fi
-
-cat $report
-
 rm -rf $output_dir
+
+end_time=$(date +%s.%N)
+
+rounded_elapsed_time=$(printf "%.0f" "$(echo "$end_time - $start_time" | bc)")
+
+echo "POD URL verification completed in  $rounded_elapsed_time seconds." >> $report
+
+if [ -f "$report" ]; then
+  cat "$report"
+fi
 
