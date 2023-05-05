@@ -4,8 +4,7 @@ start_time=$(date +%s.%N)
 
 input_dir="test/"
 output_dir="file_extract/"
-config_file="$output_dir/cssensor-dcos.json"
-qpapod="cs-sensor/unix/Client/build/qpappods.txt"
+qpapodList="cs-sensor/unix/Client/build/qpapods.txt"
 report="test_report.log"
 
 if [ -f "$report" ]; then
@@ -28,6 +27,10 @@ if [ ! -d "$output_dir" ]; then
   exit 1
 fi
 
+if docker ps -a --format "{{.Names}}" | grep -q "qualys-container-sensor"; then
+    docker stop qualys-container-sensor > /dev/null 2>&1
+fi
+
 for input_file in "$input_dir"/*.rpm; do
 
   if [ ! -f "$input_file" ]; then
@@ -39,8 +42,6 @@ for input_file in "$input_dir"/*.rpm; do
   echo "Extracting $filename to $output_dir ..." >> $report
 
   rpm2cpio "$input_file" | cpio -idmv -D "$output_dir"> /dev/null 2>&1
-
-#  mv "usr" "file_extract/"
 
   if [ $? -ne 0 ]; then
     echo "Error: RPM extraction failed for $filename"  >> $report
@@ -69,8 +70,6 @@ for input_file in "$input_dir"/*.rpm; do
 
   tar -xvf "$file" -C "$output_dir" > /dev/null 2>&1
 
-  tar -xvf "$output_dir/qualys-sensor.tar" -C "$output_dir" > /dev/null 2>&1
-
   if [ $? -ne 0 ]; then
       echo "Error: Failed to extract $file" >> $report
       continue
@@ -78,40 +77,43 @@ for input_file in "$input_dir"/*.rpm; do
 
   echo "Extraction complete." >> $report
 
- jsonFile=$(ls $output_dir/*json)
-
-  image_sources=()
-
-  while IFS= read -r -d '' jsonFile; do
-    if [[ -f "$jsonFile" && "${#jsonFile}" -gt 50 ]]; then
-      imageJSON=$jsonFile
-      sources=$(grep -o '"image-source": *"[^"]*"' "$imageJSON" | cut -d '"' -f 4)
-      readarray -t sources_array <<< "$sources"
-      for source in "${sources_array[@]}"; do
-        image_sources+=("$source")
-      done
-    fi
-  done < <(find "$output_dir" -name "*.json" -type f -print0)
-
-  if [ ${#image_sources[@]} -gt 1 ]; then
-    if [ "${image_sources[0]}" = "${image_sources[1]}" ]; then
-      if [ "$pod" = "${image_sources[0]}" ]; then
-        echo "Success: The URL for $pod is correct." >> $report
-      else
-        echo "Error: The URL for $pod is wrong." >> $report
-      fi
-    else
-      echo "Error: The POD is not matching in Image JSON." >> $report
-    fi
-  else
-    if [ "$pod" = "${image_sources[0]}" ]; then
-        echo "Success: The URL for $pod is correct." >> $report
-    else
-        echo "Error: The URL for $pod is wrong." >> $report
-    fi
+  if [ ! -d "/storage" ]; then
+    mkdir /storage
   fi
 
+  container_id=$(echo "$(sudo $output_dir/./installsensor.sh ActivationId=5cb7be7c-17da-470e-997e-cb417bc537d3 CustomerId=3eba8c3a-d968-53f6-8256-116e756841b7 Storage=/storage -s)" | sed -n 's/.*container ID: \([^ ]*\) successfully\./\1/p')
+
+  if [ -z "$container_id" ]; then
+    echo "Error: No running container found."
+    continue
+  fi
+
+  podURL=$(echo "$(docker exec -it "$container_id" sh -c "cd /usr/local/qualys/qpa && sqlite3 Default_Config.db 'SELECT value FROM Settings WHERE \`Group\` = 2 and Item = 1;'")" | tr -dc '[:print:]' | tr -s ' ')
+
+  value=$(grep -oP "(?<=${pod}=)[^[:space:]]+" "$qpapodList")
+
+  qpapodURL=$(echo "$(echo "$value" | sed 's/|-\s*//')" | tr -dc '[:print:]' | tr -s ' ')
+
+  if [ -z "$qpapodURL" ]; then
+      echo "Error: Failed to get QPAPOD URL for from RPM file" >> $report
+      continue
+  fi
+
+  if [ "$podURL" = "$qpapodURL" ]; then
+    echo "Success: The URL for $pod is correct." >> $report
+  else
+    echo "Error: The URL for $pod is wrong." >> $report
+  fi
+
+  docker stop $container_id > /dev/null 2>&1
+
+  docker rm -f $container_id > /dev/null 2>&1
+
+  docker rmi -f $(cat $output_dir/image-id) > /dev/null 2>&1
+
   rm -rf $output_dir/*
+
+  rm -rf /storage
 
   echo  >> $report
 
@@ -130,5 +132,3 @@ if [ -f "$report" ]; then
 else
   echo "No RPM files found"
 fi
-
-
